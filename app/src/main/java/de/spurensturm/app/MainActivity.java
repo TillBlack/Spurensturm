@@ -146,7 +146,7 @@ public class MainActivity extends Activity implements GameView.Listener {
         title.setLetterSpacing(0.06f);
         title.setGravity(Gravity.CENTER);
         root.addView(title, margin(0, 50, 0, 6));
-        TextView sub = text("Wähle die richtigen Tore, vergrößere deinen Trupp und halte die Horde auf.", 15, MUTED);
+        TextView sub = text("Sammle Schützen und Upgrades – und halte die Horde in der Mitte auf.", 15, MUTED);
         sub.setGravity(Gravity.CENTER);
         root.addView(sub, margin(0, 0, 0, 40));
 
@@ -173,8 +173,9 @@ public class MainActivity extends Activity implements GameView.Listener {
             root.addView(restart, margin(0, 0, 0, 30));
         }
 
-        TextView help = text("So geht's: Wische nach links oder rechts, um die Spur zu wechseln. Blaue Tore helfen, rote schaden. "
-                + "Schieß auf Tore mit Zahlen, dann steigt ihr Wert! Am Ende jedes Levels wartet ein Boss.", 14, MUTED);
+        TextView help = text("So geht's: Wische, um die Spur zu wechseln. Links gibt es +1-Schützen, in der Mitte kommen die Zombies, "
+                + "rechts warten Schieß-Upgrades. Bleib nicht zu lange weg – kurz vor dir laufen die Zombies auf deine Spur! "
+                + "Am Ende jedes Levels kommt ein Boss durch die Mitte.", 14, MUTED);
         help.setGravity(Gravity.CENTER);
         root.addView(help, margin(0, 10, 0, 0));
     }
@@ -237,7 +238,7 @@ public class MainActivity extends Activity implements GameView.Listener {
             Button again = button("↻  Nochmal", ACCENT, Color.WHITE);
             again.setOnClickListener(v -> startLevel());
             root.addView(again, margin(0, 0, 0, 14));
-            TextView tip = text("Tipp: Nimm früh Tore mit „+“ und „×“ und schieß auf rote Zahlentore – mit genug Treffern werden sie blau.", 14, MUTED);
+            TextView tip = text("Tipp: Sammle früh viele +1-Schützen, aber geh rechtzeitig zurück in die Mitte, wenn ein Rudel kommt. Gegen den Boss helfen Schaden-Upgrades.", 14, MUTED);
             tip.setGravity(Gravity.CENTER);
             root.addView(tip, margin(0, 6, 0, 20));
         }

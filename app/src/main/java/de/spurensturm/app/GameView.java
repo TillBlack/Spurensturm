@@ -280,6 +280,15 @@ public class GameView extends View implements Choreographer.FrameCallback {
                 quad(c, Color.argb(170, 240, 235, 210), x - 0.07f, 0, z, x + 0.07f, 0, z, x + 0.07f, 0, z2, x - 0.07f, 0, z2);
             }
         }
+        // Spur-Beschriftungen vor dem Trupp
+        String[] names = {"+1", "ZOMBIES", "UPGRADES"};
+        int[] cols = {GOOD, Color.rgb(140, 200, 110), Color.rgb(255, 190, 60)};
+        for (int lane = 0; lane < 3; lane++) {
+            float lx = (lane - 1) * Game.LANE, lz = 3.2f;
+            text.setTextSize(PS(lz) * 0.36f);
+            text.setColor(withAlpha(cols[lane], 150));
+            c.drawText(names[lane], PX(lx, lz), PY(0, lz), text);
+        }
         // Risse / Flecken auf der Straße
         float o2 = game.distance % 9f;
         for (float z = -3 - o2; z < 50; z += 9f) {
@@ -342,9 +351,9 @@ public class GameView extends View implements Choreographer.FrameCallback {
         if (z + CAM_BACK < 1.2f) return;
         float alphaMul = row.passed ? 0.45f : 1f;
         for (Game.Gate g : row.gates) {
+            if (g == null) continue;
             float cx = (g.lane - 1) * Game.LANE;
-            boolean good = Game.positive(g);
-            int col = good ? GOOD : BAD;
+            int col = g.type == Game.G_ADD ? GOOD : Color.rgb(255, 190, 60);
             if (g.flash > 0) col = Color.WHITE;
             float hw = 0.92f, h = 2.3f;
             p.setStyle(Paint.Style.FILL);
@@ -364,25 +373,24 @@ public class GameView extends View implements Choreographer.FrameCallback {
             c.drawText(label, (l + r) / 2 + 2, (t + b) / 2 + size * 0.35f + 2, text);
             text.setColor(withAlpha(Color.WHITE, (int) (255 * alphaMul)));
             c.drawText(label, (l + r) / 2, (t + b) / 2 + size * 0.35f, text);
-        }
-        // Pfosten
-        for (int i = 0; i < 4; i++) {
-            float x = -3 + i * 2f;
-            quad(c, Color.rgb(60, 62, 70), x - 0.07f, 0, z, x + 0.07f, 0, z, x + 0.07f, 2.45f, z, x - 0.07f, 2.45f, z);
+            for (int side = -1; side <= 1; side += 2) {
+                float x = cx + side * 0.95f;
+                quad(c, Color.rgb(60, 62, 70), x - 0.07f, 0, z, x + 0.07f, 0, z, x + 0.07f, 2.45f, z, x - 0.07f, 2.45f, z);
+            }
         }
     }
 
     private void drawZombie(Canvas c, Zombie z) {
         if (z.z + CAM_BACK < 1f || z.z > 60) return;
         float s = PS(z.z);
-        float scale = z.type == Game.BOSS ? 3.0f : z.type == Game.BRUTE ? 1.55f : z.type == Game.RUNNER ? 0.92f : 1f;
+        float scale = z.type == Game.BOSS ? 3.0f : z.type == Game.RUNNER ? 0.92f : 1f;
         float cx = PX(z.x, z.z), ground = PY(0, z.z);
         float u = s * 0.5f * scale; // Grundeinheit
         float bob = (float) Math.sin(z.wobble * 2) * u * 0.06f;
         boolean flash = z.hitFlash > 0;
 
-        int skin = z.type == Game.BOSS ? Color.rgb(130, 90, 150) : z.type == Game.BRUTE ? Color.rgb(96, 128, 82) : Color.rgb(132, 168, 108);
-        int shirt = z.type == Game.RUNNER ? Color.rgb(150, 60, 55) : z.type == Game.BRUTE ? Color.rgb(70, 66, 80) : z.type == Game.BOSS ? Color.rgb(70, 40, 80) : Color.rgb(96, 104, 120);
+        int skin = z.type == Game.BOSS ? Color.rgb(130, 90, 150) : Color.rgb(132, 168, 108);
+        int shirt = z.type == Game.RUNNER ? Color.rgb(150, 60, 55) : z.type == Game.BOSS ? Color.rgb(70, 40, 80) : Color.rgb(96, 104, 120);
         if (flash) { skin = Color.WHITE; shirt = Color.rgb(230, 230, 230); }
 
         // Schatten
@@ -421,14 +429,6 @@ public class GameView extends View implements Choreographer.FrameCallback {
                 path.close();
                 c.drawPath(path, p);
             }
-        }
-        // Lebensbalken für Brocken und Boss (Boss oben im HUD)
-        if (z.type == Game.BRUTE && z.hp < z.maxHp) {
-            float bw = u * 1.2f;
-            p.setColor(Color.argb(170, 0, 0, 0));
-            c.drawRect(cx - bw / 2, headY - u * 0.8f, cx + bw / 2, headY - u * 0.65f, p);
-            p.setColor(Color.rgb(255, 80, 70));
-            c.drawRect(cx - bw / 2, headY - u * 0.8f, cx - bw / 2 + bw * z.hp / z.maxHp, headY - u * 0.65f, p);
         }
     }
 
@@ -519,7 +519,7 @@ public class GameView extends View implements Choreographer.FrameCallback {
         for (Game.Fx e : game.fx) {
             float k = e.t / e.life;
             if (e.type == Game.FX_GATE && e.text != null) {
-                boolean boss = "BOSS!".equals(e.text);
+                boolean boss = "BOSS!".equals(e.text) || "HORDE!".equals(e.text);
                 float sx = boss ? W / 2 : PX(e.x, 0.5f);
                 float sy = boss ? H * 0.38f : PY(3.2f, 0.5f) - k * 60 * density;
                 text.setTextSize((boss ? 56 : 34) * density * (1 + 0.2f * (1 - k)));
@@ -582,14 +582,14 @@ public class GameView extends View implements Choreographer.FrameCallback {
         // Werte
         text.setTextSize(13 * d);
         text.setColor(Color.argb(220, 255, 255, 255));
-        String stats = "Schaden " + fmt(game.damage) + "   ·   Feuerrate " + fmt(game.fireRate) + "/s";
+        String stats = "Schaden " + fmt(game.damage) + "  ·  Feuerrate " + fmt(game.fireRate) + "/s" + (game.pierce > 1 ? "  ·  Durchschuss " + game.pierce : "");
         c.drawText(stats, W / 2, by + bh + (game.boss != null ? 38 : 22) * d, text);
 
         // Hinweis zur Steuerung am Anfang
         if (game.time < 4f) {
             text.setTextSize(17 * d);
             text.setColor(withAlpha(Color.WHITE, (int) (255 * Math.min(1f, (4f - game.time)))));
-            c.drawText("← Wischen zum Steuern →", W / 2, H - 70 * d, text);
+            c.drawText("← Wischen: Spur wechseln →", W / 2, H - 70 * d, text);
         }
         // Ende
         if (game.state != Game.RUNNING) {

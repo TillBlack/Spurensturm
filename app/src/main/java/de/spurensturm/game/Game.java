@@ -6,45 +6,51 @@ import java.util.Random;
 
 /**
  * Ein Level von Spurensturm. Läuft ohne Android (testbar).
- * Koordinaten: x quer (Spuren bei -2, 0, +2), z nach vorne (Trupp steht bei z = 0).
+ * Der Trupp steht still bei z = 0, alles kommt auf ihn zu.
+ * Spuren von links nach rechts: +1-Tore (x = -2) · Zombies (x = 0) · Schieß-Upgrades (x = +2).
  */
 public final class Game {
 
     public static final float LANE = 2f, ROAD_HALF = 3f;
-    public static final float SPAWN_Z = 44f, BULLET_SPEED = 30f, RANGE = 30f;
-    public static final float GATE_SPEED = 6f, ZOMBIE_BASE_SPEED = 2.2f;
-    public static final int MAX_SHOOTERS = 120;
+    public static final float SPAWN_Z = 44f, BULLET_SPEED = 30f, RANGE = 32f;
+    public static final float GATE_SPEED = 6.5f;
+    public static final int MAX_SHOOTERS = 100;
     /** Sekunden bis zum Boss. Mit Bosskampf dauert ein Level etwa 5 Minuten. */
     public static final float RUN_TIME = 250f;
+    public static final int LANE_PLUS = 0, LANE_ZOMBIES = 1, LANE_UPGRADES = 2;
 
     public static final int RUNNING = 0, WON = 1, LOST = 2;
 
     // ------------------------------------------------------------------ Bausteine
 
-    public static final int WALKER = 0, RUNNER = 1, BRUTE = 2, BOSS = 3;
+    public static final int WALKER = 0, RUNNER = 1, BOSS = 3;
 
     public static final class Zombie {
         public int type;
         public float x, z, hp, maxHp, speed, r, wobble, hitFlash;
         public int bite;
         public boolean dead;
+        public long hitBy;
     }
 
     public static final class Bullet {
         public float x, z, dmg;
+        public int pierce;
         public boolean dead;
+        public final List<Zombie> hit = new ArrayList<>(2);
     }
 
-    public static final int G_ADD = 0, G_MUL = 1, G_DIV = 2, G_RATE = 3, G_DMG = 4;
+    public static final int G_ADD = 0, G_RATE = 3, G_DMG = 4, G_PIERCE = 5;
 
     public static final class Gate {
         public int lane, type;
-        /** G_ADD: Anzahl (auch negativ), G_MUL/G_DIV: Faktor, G_RATE: Prozent, G_DMG: Plus. */
+        /** G_ADD: Anzahl, G_RATE: Prozent, G_DMG/G_PIERCE: Plus. */
         public int value;
         public int hits;
         public float flash;
     }
 
+    /** Ein einzelnes Tor auf einer Spur (gates[] hat nur auf dieser Spur einen Eintrag). */
     public static final class GateRow {
         public float z;
         public final Gate[] gates = new Gate[3];
@@ -66,67 +72,73 @@ public final class Game {
     public final Random rnd;
     public float time;
     public float squadX, targetX;
-    public int shooters = 1;
+    public int shooters = 3;
     public float damage = 1f;
     /** Schüsse pro Sekunde und Schütze. */
-    public float fireRate = 2f;
+    public float fireRate = 0.7f;
+    /** Wie viele Zombies ein Schuss durchschlägt. */
+    public int pierce = 1;
     public int state = RUNNING;
     public final List<Zombie> zombies = new ArrayList<>();
     public final List<Bullet> bullets = new ArrayList<>();
     public final List<GateRow> gateRows = new ArrayList<>();
     public final List<Fx> fx = new ArrayList<>();
     public Zombie boss;
+    /** Bleibt konstant – der Trupp läuft nicht, er steht. */
     public float distance;
     public int kills;
-    public float lastLoss;
+    public float lastLoss = 99;
 
-    private float fireAcc, spawnAcc, nextGate = 7f, nextHorde = 40f;
-    private int gateIndex;
+    private float fireAcc, spawnAcc, nextPlus = 1.5f, nextUpgrade = 5f, nextPack = 12f, nextHorde = 45f;
     private final float diff;
 
     public Game(int level, long seed) {
         this.level = Math.max(1, level);
         this.rnd = new Random(seed);
-        this.diff = (float) Math.pow(1.13, effLevel(this.level) - 1);
+        this.diff = effLevel(this.level);
     }
-
-    // ------------------------------------------------------------------ Kenngrößen
 
     /** Ab Level 10 steigt die Schwierigkeit nur noch langsam – schwer, aber nie unmöglich. */
     static float effLevel(int level) {
         return level <= 10 ? level : 10f + 1.8f * (1f - (float) Math.exp(-(level - 10) / 8.0));
     }
 
+    // ------------------------------------------------------------------ Kenngrößen
+
     public float dps() { return shooters * damage * fireRate; }
 
-    /** Halbe Breite der Formation. */
-    public float squadHalfWidth() { return Math.min(1.15f, 0.28f + 0.11f * (float) Math.sqrt(shooters)); }
+    /** Halbe Breite der Formation (passt immer in eine Spur). */
+    public float squadHalfWidth() { return Math.min(0.85f, 0.25f + 0.07f * (float) Math.sqrt(shooters)); }
 
-    /** Fortschritt bis zum Boss (0..1). */
     public float progress() { return Math.min(1f, time / RUN_TIME); }
 
-    /** Zombie-Lebenspunkte wachsen mit der Zeit im Level und mit dem Level. */
-    private float hpScale() {
-        // Level-Schwierigkeit steigt in der ersten Minute langsam an – der Start bleibt fair
-        float ramp = Math.min(1f, time / 75f);
-        float lvl = 1f + (diff - 1f) * ramp * ramp;
-        return lvl * (1f + time / 55f + (time / 120f) * (time / 120f));
+    public int squadLane() {
+        int lane = Math.round(squadX / LANE) + 1;
+        return Math.max(0, Math.min(2, lane));
     }
 
-    public float bossMaxHp() { return 2600f * (float) Math.pow(1.16, effLevel(level) - 1); }
+    public static float BOSS_HP = 110000f, BOSS_GROWTH = 1.1f;
+    public float bossMaxHp() { return BOSS_HP * (float) Math.pow(BOSS_GROWTH, diff - 1); }
+
+    /** Stellschrauben der Zombie-Menge (per Simulation eingestellt). */
+    public static float ZA = 0.35f, ZB = 0.022f, ZC = 0.00012f, ZL = 0.13f, PACK = 2.5f, HORDE = 7f;
+
+    /** Zombies pro Sekunde in der mittleren Spur. */
+    float zombieRate() {
+        float ramp = Math.min(1f, time / 70f);
+        return (ZA + ZB * time + ZC * time * time) * (1f + ZL * (diff - 1) * ramp);
+    }
 
     // ------------------------------------------------------------------ Schleife
 
     public void update(float dt) {
         if (state != RUNNING) { tickFx(dt); return; }
         time += dt;
-        distance += GATE_SPEED * dt;
         lastLoss += dt;
         tickFx(dt);
 
-        // Trupp gleitet zum Ziel
-        targetX = clamp(targetX, -ROAD_HALF + 0.6f, ROAD_HALF - 0.6f);
-        float maxMove = 9f * dt;
+        targetX = clamp(targetX, -LANE, LANE);
+        float maxMove = 10f * dt;
         squadX += clamp(targetX - squadX, -maxMove, maxMove);
 
         schedule(dt);
@@ -140,112 +152,84 @@ public final class Game {
     }
 
     private void schedule(float dt) {
+        // +1-Tore links – immer
+        if (time >= nextPlus && boss == null) {
+            addGate(LANE_PLUS, G_ADD, 1);
+            nextPlus += 2.1f + rnd.nextFloat() * 0.8f;
+        }
+        // Upgrades rechts
+        if (time >= nextUpgrade && time < RUN_TIME + 20) {
+            float r = rnd.nextFloat();
+            if (r < 0.5f) addGate(LANE_UPGRADES, G_RATE, 10 + 5 * rnd.nextInt(3));
+            else if (r < 0.82f) addGate(LANE_UPGRADES, G_DMG, 1);
+            else addGate(LANE_UPGRADES, G_PIERCE, 1);
+            nextUpgrade += 6.5f + rnd.nextFloat() * 2.5f;
+        }
         if (time < RUN_TIME) {
-            // Tore
-            if (time >= nextGate && time < RUN_TIME - 8) {
-                spawnGateRow();
-                nextGate += 15f + rnd.nextFloat() * 4f;
+            // Zombies: stetiger Strom plus Rudel
+            spawnAcc += zombieRate() * dt;
+            while (spawnAcc >= 1f) { spawnAcc -= 1f; spawnZombie(time > 20 && rnd.nextFloat() < 0.25f ? RUNNER : WALKER, SPAWN_Z); }
+            if (time >= nextPack) {
+                int n = 3 + rnd.nextInt(3) + Math.round(zombieRate() * PACK);
+                for (int i = 0; i < n; i++) spawnZombie(WALKER, SPAWN_Z + i * 0.45f);
+                nextPack += 10f + rnd.nextFloat() * 4f;
             }
-            // Zombies laufend
-            float rate = (0.55f + time * 0.0075f) * (1f + 0.05f * (effLevel(level) - 1) * Math.min(1f, time / 60f));
-            spawnAcc += rate * dt;
-            while (spawnAcc >= 1f) { spawnAcc -= 1f; spawnZombie(randomType(), randomX(), SPAWN_Z); }
-            // Horden
             if (time >= nextHorde) {
-                nextHorde += 38f + rnd.nextFloat() * 10f;
-                int n = 8 + (int) (time / 25f) + (int) (effLevel(level) / 2);
-                float hx = (rnd.nextInt(3) - 1) * LANE;
-                for (int i = 0; i < n; i++) spawnZombie(i % 7 == 6 ? BRUTE : WALKER, hx + (rnd.nextFloat() - 0.5f) * 2.2f, SPAWN_Z + i * 0.7f);
+                int n = 8 + Math.round(zombieRate() * HORDE);
+                for (int i = 0; i < n; i++) spawnZombie(i % 5 == 4 ? RUNNER : WALKER, SPAWN_Z + i * 0.3f);
+                nextHorde += 45f + rnd.nextFloat() * 8f;
+                Fx f = addFx(FX_GATE, 0, SPAWN_Z, 0, 2f);
+                f.text = "HORDE!";
             }
         } else if (boss == null) {
             boss = new Zombie();
             boss.type = BOSS;
             boss.x = 0; boss.z = SPAWN_Z;
             boss.hp = boss.maxHp = bossMaxHp();
-            boss.speed = 0.85f + 0.02f * Math.min(10, level);
-            boss.r = 1.45f;
+            boss.speed = 0.85f;
+            boss.r = 1.2f;
             boss.bite = 9999;
             zombies.add(boss);
             Fx f = addFx(FX_GATE, 0, SPAWN_Z, 0, 2.5f);
             f.text = "BOSS!";
         } else {
-            // Kleine Helfer während des Bosskampfs
-            spawnAcc += (0.5f + 0.05f * effLevel(level)) * dt;
-            while (spawnAcc >= 1f) { spawnAcc -= 1f; spawnZombie(rnd.nextFloat() < 0.3f ? RUNNER : WALKER, randomX(), SPAWN_Z); }
+            spawnAcc += (0.7f + 0.06f * diff) * dt;
+            while (spawnAcc >= 1f) { spawnAcc -= 1f; spawnZombie(rnd.nextFloat() < 0.3f ? RUNNER : WALKER, SPAWN_Z); }
         }
     }
 
-    private int randomType() {
-        float r = rnd.nextFloat();
-        if (time > 70 && r < 0.09f + 0.01f * Math.min(8, level)) return BRUTE;
-        if (time > 25 && r < 0.32f) return RUNNER;
-        return WALKER;
-    }
-
-    private float randomX() {
-        return (rnd.nextInt(3) - 1) * LANE + (rnd.nextFloat() - 0.5f) * 1.4f;
-    }
-
-    private void spawnZombie(int type, float x, float z) {
+    private void spawnZombie(int type, float z) {
         Zombie zb = new Zombie();
         zb.type = type;
-        zb.x = clamp(x, -ROAD_HALF + 0.4f, ROAD_HALF - 0.4f);
-        zb.z = z;
-        float s = hpScale();
-        switch (type) {
-            case RUNNER: zb.hp = 2.2f * s; zb.speed = 3.4f; zb.r = 0.42f; zb.bite = 1; break;
-            case BRUTE: zb.hp = 24f * s; zb.speed = 0.9f; zb.r = 0.75f; zb.bite = 5; break;
-            default: zb.hp = 3.2f * s; zb.speed = 1.5f; zb.r = 0.45f; zb.bite = 1; break;
-        }
-        zb.maxHp = zb.hp;
+        zb.x = (rnd.nextFloat() - 0.5f) * 1.5f;
+        zb.z = z + rnd.nextFloat() * 0.6f;
+        zb.hp = zb.maxHp = 1;
+        zb.speed = type == RUNNER ? 6.5f : 4.2f + rnd.nextFloat() * 0.6f;
+        zb.r = 0.42f;
+        zb.bite = 1;
         zb.wobble = rnd.nextFloat() * 10f;
         zombies.add(zb);
     }
 
     // ------------------------------------------------------------------ Tore
 
-    private void spawnGateRow() {
+    private void addGate(int lane, int type, int value) {
         GateRow row = new GateRow();
         row.z = SPAWN_Z;
-        int i = gateIndex++;
-        float growth = 1f + i * 0.55f;
-        Gate good = new Gate(), mid = new Gate(), bad = new Gate();
-        // Gutes Tor
-        float r = rnd.nextFloat();
-        if (r < 0.22f && i >= 1) { good.type = G_MUL; good.value = shooters < 25 ? 2 : 2; }
-        else if (r < 0.38f) { good.type = G_DMG; good.value = 1; }
-        else { good.type = G_ADD; good.value = Math.round((4 + rnd.nextInt(4)) * growth); }
-        // Mittleres Tor
-        r = rnd.nextFloat();
-        if (r < 0.45f) { mid.type = G_RATE; mid.value = 15 + 5 * rnd.nextInt(3); }
-        else { mid.type = G_ADD; mid.value = Math.round((2 + rnd.nextInt(3)) * growth); }
-        // Schlechtes Tor (wird mit höherem Level fieser)
-        r = rnd.nextFloat();
-        if (r < 0.2f + 0.02f * Math.min(10, level) && i >= 2) { bad.type = G_DIV; bad.value = 2; }
-        else { bad.type = G_ADD; bad.value = -Math.round((3 + rnd.nextInt(4)) * growth * (1f + 0.08f * (effLevel(level) - 1))); }
-        Gate[] all = {good, mid, bad};
-        // Ab und zu zwei schlechte statt eines mittleren (höhere Level)
-        if (level >= 3 && rnd.nextFloat() < 0.12f + 0.02f * Math.min(10, level)) {
-            Gate bad2 = new Gate();
-            bad2.type = G_ADD;
-            bad2.value = -Math.round((2 + rnd.nextInt(3)) * growth);
-            all[1] = bad2;
-        }
-        // Spuren mischen
-        for (int k = 2; k > 0; k--) { int j = rnd.nextInt(k + 1); Gate t = all[k]; all[k] = all[j]; all[j] = t; }
-        for (int lane = 0; lane < 3; lane++) { all[lane].lane = lane; row.gates[lane] = all[lane]; }
+        Gate g = new Gate();
+        g.lane = lane; g.type = type; g.value = value;
+        row.gates[lane] = g;
         gateRows.add(row);
     }
 
     private void moveGates(float dt) {
+        int lane = squadLane();
         for (GateRow row : gateRows) {
             row.z -= GATE_SPEED * dt;
-            for (Gate g : row.gates) if (g.flash > 0) g.flash -= dt;
+            for (Gate g : row.gates) if (g != null && g.flash > 0) g.flash -= dt;
             if (!row.passed && row.z <= 0.3f) {
                 row.passed = true;
-                int lane = Math.round(squadX / LANE) + 1;
-                lane = Math.max(0, Math.min(2, lane));
-                apply(row.gates[lane]);
+                if (row.gates[lane] != null) apply(row.gates[lane]);
             }
         }
         gateRows.removeIf(r -> r.z < -3f);
@@ -255,46 +239,39 @@ public final class Game {
         int before = shooters;
         switch (g.type) {
             case G_ADD: shooters += g.value; break;
-            case G_MUL: shooters *= g.value; break;
-            case G_DIV: shooters = Math.max(1, shooters / g.value); break;
             case G_RATE: fireRate *= 1f + g.value / 100f; break;
             case G_DMG: damage += g.value; break;
+            case G_PIERCE: pierce += g.value; break;
         }
         shooters = Math.min(MAX_SHOOTERS, shooters);
-        Fx f = addFx(FX_GATE, squadX, 1f, shooters - before, 1.2f);
+        Fx f = addFx(FX_GATE, squadX, 1f, Math.max(1, shooters - before), 1.1f);
         f.text = label(g);
-        if (shooters < before) lastLoss = 0;
     }
 
     public static String label(Gate g) {
         switch (g.type) {
-            case G_ADD: return g.value >= 0 ? "+" + g.value : String.valueOf(g.value);
-            case G_MUL: return "×" + g.value;
-            case G_DIV: return "÷" + g.value;
+            case G_ADD: return "+" + g.value;
             case G_RATE: return "Tempo +" + g.value + "%";
-            default: return "Schaden +" + g.value;
+            case G_DMG: return "Schaden +" + g.value;
+            default: return "Durchschuss";
         }
     }
 
-    public static boolean positive(Gate g) {
-        return g.type == G_MUL || g.type == G_RATE || g.type == G_DMG || (g.type == G_ADD && g.value >= 0);
-    }
+    public static boolean positive(Gate g) { return true; }
 
     // ------------------------------------------------------------------ Schießen
 
     private void fire(float dt) {
-        float shotsPerSec = shooters * fireRate;
-        // Bei sehr großen Trupps werden Schüsse gebündelt (gleicher Gesamtschaden)
-        float cap = 110f;
-        float bundle = Math.max(1f, shotsPerSec / cap);
-        fireAcc += shotsPerSec / bundle * dt;
+        float shotsPerSec = Math.min(420f, shooters * fireRate);
+        fireAcc += shotsPerSec * dt;
         float w = squadHalfWidth();
         while (fireAcc >= 1f) {
             fireAcc -= 1f;
             Bullet b = new Bullet();
             b.x = squadX + (rnd.nextFloat() * 2 - 1) * w;
-            b.z = 0.6f;
-            b.dmg = damage * bundle;
+            b.z = 0.6f + rnd.nextFloat() * 0.4f;
+            b.dmg = damage * Math.max(1f, shooters * fireRate / 420f);
+            b.pierce = pierce;
             bullets.add(b);
         }
     }
@@ -306,22 +283,23 @@ public final class Game {
                 b.z += step;
                 if (b.z > RANGE) { b.dead = true; break; }
                 for (Zombie z : zombies) {
-                    if (z.dead || Math.abs(z.z - b.z) > 0.55f + (z.type == BOSS ? 0.6f : 0) || Math.abs(z.x - b.x) > z.r) continue;
+                    if (z.dead || b.hit.contains(z)) continue;
+                    float reach = z.type == BOSS ? 1.0f : 0.5f;
+                    if (Math.abs(z.z - b.z) > reach || Math.abs(z.x - b.x) > z.r) continue;
                     hit(z, b.dmg);
-                    b.dead = true;
-                    break;
+                    b.hit.add(z);
+                    if (--b.pierce <= 0 || z.type == BOSS) { b.dead = true; break; }
                 }
                 if (b.dead) break;
                 for (GateRow row : gateRows) {
                     if (row.passed || Math.abs(row.z - b.z) > 0.4f) continue;
                     int lane = Math.round(b.x / LANE) + 1;
-                    if (lane < 0 || lane > 2 || Math.abs(b.x - (lane - 1) * LANE) > 0.9f) continue;
+                    if (lane < 0 || lane > 2 || row.gates[lane] == null || Math.abs(b.x - (lane - 1) * LANE) > 0.9f) continue;
                     Gate g = row.gates[lane];
                     b.dead = true;
                     if (g.type == G_ADD) {
                         g.hits++;
-                        int need = 4 + level / 2;
-                        if (g.hits >= need) { g.hits = 0; g.value++; g.flash = 0.15f; }
+                        if (g.hits >= 10 + (int) diff) { g.hits = 0; g.value++; g.flash = 0.15f; }
                     }
                     break;
                 }
@@ -332,7 +310,6 @@ public final class Game {
     private void hit(Zombie z, float dmg) {
         z.hp -= dmg;
         z.hitFlash = 0.08f;
-        if (z.type == BOSS) z.z += 0.012f * Math.min(4f, dmg / 4f); // Treffer bremsen den Boss minimal
         if (z.hp <= 0) {
             z.dead = true;
             kills++;
@@ -351,11 +328,10 @@ public final class Game {
         for (Zombie z : zombies) {
             if (z.dead) continue;
             if (z.hitFlash > 0) z.hitFlash -= dt;
-            z.wobble += dt * (2f + z.speed);
-            float approach = z.type == BOSS ? z.speed : ZOMBIE_BASE_SPEED + z.speed;
-            z.z -= approach * dt;
+            z.wobble += dt * (2f + z.speed * 0.6f);
+            z.z -= z.speed * dt;
             if (z.type == BOSS) {
-                z.x = (float) Math.sin(time * 0.45f) * 1.4f;
+                z.x = (float) Math.sin(time * 0.4f) * 0.35f;
                 if (z.z <= 1.6f) {
                     state = LOST;
                     shooters = 0;
@@ -363,9 +339,9 @@ public final class Game {
                 }
                 continue;
             }
-            // In der Nähe laufen Zombies auf den Trupp zu
-            if (z.z < 11f) {
-                float pull = (z.type == RUNNER ? 1.1f : 0.6f) * dt;
+            // Kurz vor dem Trupp schwenken die Zombies auf dessen Spur ein
+            if (z.z < 9f) {
+                float pull = (z.type == RUNNER ? 3.2f : 2.4f) * dt;
                 z.x += clamp(squadX - z.x, -pull, pull);
             }
             if (z.z <= 0.5f) {
