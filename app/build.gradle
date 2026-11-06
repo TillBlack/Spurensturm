@@ -1,0 +1,42 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'de.spurensturm'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'de.spurensturm'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // Fester Schlüssel: damit lassen sich spätere Updates einfach drüber installieren.
+    signingConfigs {
+        release {
+            storeFile file('spurensturm.jks')
+            storePassword 'xozw982yhbQw4qouOx2c'
+            keyAlias 'spurensturm'
+            keyPassword 'xozw982yhbQw4qouOx2c'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        encoding 'UTF-8'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
